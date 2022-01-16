@@ -1,6 +1,7 @@
 package gotool
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"flag"
@@ -13,12 +14,17 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"text/template"
 
 	"gopkg.in/freddierice/go-losetup.v1"
 )
 
 var (
-	sqfsRootTemplate = flag.String("gotool.sqfsroot_template", "http://localhost:8000/gotool.amd64.sqfs", "SQFS root path")
+	sqfsRootTemplate = flag.String(
+		"gotool.sqfsroot_template",
+		"https://github.com/anupcshan/gotool/releases/download/{{ .GoVersion }}/gotool.{{ .GoArch }}.sqfs",
+		"SQFS URL template",
+	)
 )
 
 func ensureSqfsOnDisk() (string, error) {
@@ -34,14 +40,24 @@ func ensureSqfsOnDisk() (string, error) {
 		return "", err
 	}
 
-	log.Println("Writing sqfs image to", sqfsPath)
-
 	f, err := os.CreateTemp(homeDir, "sqfs")
 	if err != nil {
 		return "", err
 	}
 
-	resp, err := http.Get(*sqfsRootTemplate)
+	var sqfsUrlBuf bytes.Buffer
+	sqfsUrlTemplate := template.Must(template.New("sqfsurl").Parse(*sqfsRootTemplate))
+	sqfsUrlTemplate.Execute(&sqfsUrlBuf, struct {
+		GoArch    string
+		GoVersion string
+	}{
+		GoArch:    runtime.GOARCH,
+		GoVersion: GoVersion,
+	})
+
+	log.Println("Fetching sqfs image from", sqfsUrlBuf.String())
+
+	resp, err := http.Get(sqfsUrlBuf.String())
 	if err != nil {
 		return "", err
 	}
@@ -62,6 +78,8 @@ func ensureSqfsOnDisk() (string, error) {
 	if actualChecksum != checksums[runtime.GOARCH] {
 		return "", fmt.Errorf("Checksum mismatch, actual %q, expected %q", actualChecksum, checksums[runtime.GOARCH])
 	}
+
+	log.Println("Writing sqfs image to", sqfsPath)
 
 	if err := os.Rename(f.Name(), sqfsPath); err != nil {
 		return "", err
