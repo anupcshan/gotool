@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 
@@ -8,6 +9,7 @@ import (
 )
 
 func main() {
+	flag.Parse()
 	log.SetFlags(log.Lshortfile | log.Lmicroseconds)
 
 	goroot, err := gotool.InstallGo()

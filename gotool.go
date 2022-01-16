@@ -1,6 +1,8 @@
 package gotool
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -8,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -15,7 +18,7 @@ import (
 )
 
 var (
-	sqfsRootTemplate = flag.String("gotool.sqfsroot_template", "http://localhost:8000/amd64/gotool.sqfs", "SQFS root path")
+	sqfsRootTemplate = flag.String("gotool.sqfsroot_template", "http://localhost:8000/gotool.amd64.sqfs", "SQFS root path")
 )
 
 func ensureSqfsOnDisk() (string, error) {
@@ -45,12 +48,19 @@ func ensureSqfsOnDisk() (string, error) {
 
 	defer resp.Body.Close()
 
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	hasher := sha256.New()
+
+	if _, err := io.Copy(io.MultiWriter(f, hasher), resp.Body); err != nil {
 		return "", err
 	}
 
 	if err := f.Close(); err != nil {
 		return "", err
+	}
+
+	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
+	if actualChecksum != checksums[runtime.GOARCH] {
+		return "", fmt.Errorf("Checksum mismatch, actual %q, expected %q", actualChecksum, checksums[runtime.GOARCH])
 	}
 
 	if err := os.Rename(f.Name(), sqfsPath); err != nil {
