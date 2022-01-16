@@ -1,0 +1,4 @@
+golang.org/x/sys v0.0.0-20211216021012-1d35b9e2eb4e h1:fLOSk5Q00efkSvAm+4xcoXD+RRmLmmulPn5I3Y9F2EM=
+golang.org/x/sys v0.0.0-20211216021012-1d35b9e2eb4e/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+gopkg.in/freddierice/go-losetup.v1 v1.0.0-20170407175016-fc9adea44124 h1:aPcd9iBdqpFyYkoGRQbQd+asp162GIRDvAVB0FhLxhc=
+gopkg.in/freddierice/go-losetup.v1 v1.0.0-20170407175016-fc9adea44124/go.mod h1:6LXpUYtVsrx91XiupFRJ8jVKOqLZf5PrbEVSGHta/84=
