@@ -19,8 +19,6 @@ FROM golang:latest
 RUN apt-get update && apt-get install -y squashfs-tools
 
 COPY build-toolchain /usr/bin/build-toolchain
-
-ENTRYPOINT /usr/bin/build-toolchain
 `
 
 var archs = []string{"amd64", "arm64", "arm"}
@@ -54,13 +52,17 @@ func rebuild(builddir string) error {
 		return fmt.Errorf("error building docker container: %w", err)
 	}
 
-	dockerRun := exec.Command(
-		"docker",
+	args := []string{
 		"run",
 		"--rm",
 		"--volume", fmt.Sprintf("%s:/tmp/buildresult:Z", builddir),
 		"gotool-rebuild-toolchain",
-	)
+		"/usr/bin/build-toolchain",
+	}
+
+	args = append(args, archs...)
+
+	dockerRun := exec.Command("docker", args...)
 	dockerRun.Dir = builddir
 	dockerRun.Stderr = os.Stderr
 	dockerRun.Stdout = os.Stdout
@@ -83,6 +85,7 @@ func upload(builddir string) error {
 			f.Close()
 			return err
 		}
+		// TODO: Actually upload to Github release
 		log.Printf("%s: %s", arch, hex.EncodeToString(h.Sum(nil)))
 	}
 
