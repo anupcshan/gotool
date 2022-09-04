@@ -18,7 +18,6 @@ import (
 
 func main() {
 	flag.Parse()
-
 	log.SetFlags(log.Lmicroseconds)
 
 	toolchainURL := fmt.Sprintf("https://go.dev/dl/go%s.src.tar.gz", gotool.GoVersion)
@@ -43,7 +42,6 @@ func main() {
 	log.Println("Done fetching")
 
 	g, ctx := errgroup.WithContext(context.Background())
-
 	for _, arch := range flag.Args() {
 		arch := arch
 		g.Go(func() error {

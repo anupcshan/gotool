@@ -1,6 +1,6 @@
 module github.com/anupcshan/gotool
 
-go 1.17
+go 1.19
 
 require gopkg.in/freddierice/go-losetup.v1 v1.0.0-20170407175016-fc9adea44124
 

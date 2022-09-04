@@ -2,15 +2,22 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"flag"
 	"fmt"
+	"go/format"
 	"io"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/anupcshan/gotool"
+	"github.com/google/go-github/v47/github"
 )
 
 const dockerfileContents = `
@@ -20,6 +27,11 @@ RUN apt-get update && apt-get install -y squashfs-tools
 
 COPY build-toolchain /usr/bin/build-toolchain
 `
+
+const (
+	githubUser     = "gotool-bot"
+	githubRepoUser = "anupcshan"
+)
 
 var archs = []string{"amd64", "arm64", "arm"}
 
@@ -73,7 +85,12 @@ func rebuild(builddir string) error {
 	return nil
 }
 
-func upload(builddir string) error {
+func upload(ctx context.Context, builddir string, client *github.Client) error {
+	var buf = new(bytes.Buffer)
+	buf.WriteString(`package gotool
+
+var checksums = map[string]string{
+`)
 	for _, arch := range archs {
 		sqfsPath := filepath.Join(builddir, fmt.Sprintf("gotool.%s.sqfs", arch))
 		f, err := os.Open(sqfsPath)
@@ -85,18 +102,100 @@ func upload(builddir string) error {
 			f.Close()
 			return err
 		}
-		// TODO: Actually upload to Github release
-		log.Printf("%s: %s", arch, hex.EncodeToString(h.Sum(nil)))
+		fmt.Fprintf(buf, `"%s": "%s",`+"\n", arch, hex.EncodeToString(h.Sum(nil)))
+	}
+
+	buf.WriteString(`}`)
+
+	fmted, err := format.Source(buf.Bytes())
+	if err != nil {
+		return err
+	}
+
+	log.Printf("%s", fmted)
+
+	log.Println("Creating release")
+	release, err := createRelease(ctx, client)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Printf("Release: %+v", release)
+
+	if err := uploadAssets(ctx, client, release, builddir); err != nil {
+		log.Fatal(err)
+	}
+
+	return closeRelease(ctx, client, release)
+
+	// Create a commit with checksums.go changed with a new tag (release version).
+	// Merge commit with master.
+}
+
+func closeRelease(ctx context.Context, client *github.Client, release *github.RepositoryRelease) error {
+	release, _, err := client.Repositories.EditRelease(ctx, githubRepoUser, "gotool", *release.ID, &github.RepositoryRelease{
+		Draft:   github.Bool(false),
+		TagName: github.String(gotool.GoVersion),
+		Name:    github.String(fmt.Sprintf("Go %s static toolchain", gotool.GoVersion)),
+	})
+
+	log.Printf("%+v", release)
+
+	return err
+}
+
+func uploadAssets(ctx context.Context, client *github.Client, release *github.RepositoryRelease, builddir string) error {
+	for _, arch := range archs {
+		sqfsPath := filepath.Join(builddir, fmt.Sprintf("gotool.%s.sqfs", arch))
+		f, err := os.Open(sqfsPath)
+		if err != nil {
+			return err
+		}
+
+		releaseAsset, _, err := client.Repositories.UploadReleaseAsset(ctx, githubRepoUser, "gotool", *release.ID, &github.UploadOptions{
+			Name: fmt.Sprintf("gotool.%s.sqfs", arch),
+		}, f)
+		log.Printf("Asset: %+v", releaseAsset)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
+func createRelease(ctx context.Context, client *github.Client) (*github.RepositoryRelease, error) {
+	release, _, err := client.Repositories.CreateRelease(ctx, githubRepoUser, "gotool", &github.RepositoryRelease{
+		Draft:   github.Bool(true),
+		TagName: github.String(gotool.GoVersion),
+		Name:    github.String(fmt.Sprintf("Go %s static toolchain", gotool.GoVersion)),
+	})
+
+	return release, err
+}
+
 func main() {
+	log.SetFlags(log.Lshortfile | log.Ltime)
+	flag.Parse()
+
 	tmp, err := ioutil.TempDir("/tmp", "rebuild-toolchain")
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	authToken := os.Getenv("GH_AUTH_TOKEN")
+	if authToken == "" {
+		log.Fatal("GH_AUTH_USER unset")
+	}
+
+	client := github.NewClient(&http.Client{
+		Transport: &github.BasicAuthTransport{
+			Username: githubUser,
+			Password: authToken,
+		},
+	})
+
+	ctx := context.Background()
 
 	log.Printf("Building toolchain in %s", tmp)
 
@@ -105,7 +204,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if err := upload(tmp); err != nil {
+	if err := upload(ctx, tmp, client); err != nil {
 		_ = os.RemoveAll(tmp)
 		log.Fatal(err)
 	}
