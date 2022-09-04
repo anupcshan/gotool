@@ -93,34 +93,6 @@ func rebuild(builddir string) error {
 }
 
 func upload(ctx context.Context, builddir string, client *github.Client) error {
-	var buf = new(bytes.Buffer)
-	buf.WriteString(`package gotool
-
-var checksums = map[string]string{
-`)
-	for _, arch := range archs {
-		sqfsPath := filepath.Join(builddir, fmt.Sprintf("gotool.%s.sqfs", arch))
-		f, err := os.Open(sqfsPath)
-		if err != nil {
-			return err
-		}
-		h := sha256.New()
-		if _, err := io.Copy(h, f); err != nil {
-			f.Close()
-			return err
-		}
-		fmt.Fprintf(buf, `"%s": "%s",`+"\n", arch, hex.EncodeToString(h.Sum(nil)))
-	}
-
-	buf.WriteString(`}`)
-
-	fmted, err := format.Source(buf.Bytes())
-	if err != nil {
-		return err
-	}
-
-	log.Printf("%s", fmted)
-
 	log.Println("Creating release")
 	release, err := createRelease(ctx, client)
 	if err != nil {
@@ -134,9 +106,6 @@ var checksums = map[string]string{
 	}
 
 	return closeRelease(ctx, client, release)
-
-	// Create a commit with checksums.go changed with a new tag (release version).
-	// Merge commit with master.
 }
 
 func closeRelease(ctx context.Context, client *github.Client, release *github.RepositoryRelease) error {
@@ -209,6 +178,126 @@ func getLatestGoRelease() (string, error) {
 	return "", fmt.Errorf("No stable releases found")
 }
 
+func updateCommit(ctx context.Context, builddir string, client *github.Client) error {
+	// Create a commit with checksums.go changed with a new tag (release version).
+	// Merge commit with master.
+	var buf = new(bytes.Buffer)
+	buf.WriteString(`package gotool
+
+var checksums = map[string]string{
+`)
+	for _, arch := range archs {
+		sqfsPath := filepath.Join(builddir, fmt.Sprintf("gotool.%s.sqfs", arch))
+		f, err := os.Open(sqfsPath)
+		if err != nil {
+			return err
+		}
+		h := sha256.New()
+		if _, err := io.Copy(h, f); err != nil {
+			f.Close()
+			return err
+		}
+		fmt.Fprintf(buf, `"%s": "%s",`+"\n", arch, hex.EncodeToString(h.Sum(nil)))
+	}
+
+	buf.WriteString(`}`)
+
+	fmted, err := format.Source(buf.Bytes())
+	if err != nil {
+		return err
+	}
+
+	log.Printf("%s", fmted)
+
+	fmtedVersion, err := format.Source(
+		[]byte(
+			fmt.Sprintf(`package gotool
+
+const GoVersion = "%s"`, goVersion),
+		),
+	)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("%s", fmtedVersion)
+
+	lastRef, _, err := client.Git.GetRef(ctx, githubRepoUser, "gotool", "heads/main")
+	if err != nil {
+		return err
+	}
+
+	lastCommit, _, err := client.Git.GetCommit(ctx, githubRepoUser, "gotool", *lastRef.Object.SHA)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("lastCommit = %+v", lastCommit)
+
+	baseTree, _, err := client.Git.GetTree(ctx, githubRepoUser, "gotool", *lastCommit.SHA, true)
+	if err != nil {
+		return err
+	}
+
+	entries := []*github.TreeEntry{
+		{
+			Path:    github.String("checksums.go"),
+			Mode:    github.String("100644"),
+			Type:    github.String("blob"),
+			Content: github.String(string(fmted)),
+		},
+		{
+			Path:    github.String("version.go"),
+			Mode:    github.String("100644"),
+			Type:    github.String("blob"),
+			Content: github.String(string(fmtedVersion)),
+		},
+	}
+
+	newTree, _, err := client.Git.CreateTree(ctx, githubRepoUser, "gotool", *baseTree.SHA, entries)
+	if err != nil {
+		return err
+	}
+	log.Printf("newTree = %+v", newTree)
+
+	newCommit, _, err := client.Git.CreateCommit(ctx, githubRepoUser, "gotool", &github.Commit{
+		Message: github.String("Update to Go version " + goVersion),
+		Tree:    newTree,
+		Parents: []*github.Commit{lastCommit},
+	})
+	if err != nil {
+		return err
+	}
+	log.Printf("newCommit = %+v", newCommit)
+
+	newRef, _, err := client.Git.CreateRef(ctx, githubRepoUser, "gotool", &github.Reference{
+		Ref: github.String("refs/heads/pull-" + goVersion),
+		Object: &github.GitObject{
+			SHA: newCommit.SHA,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	log.Printf("newRef = %+v", newRef)
+
+	pr, _, err := client.PullRequests.Create(ctx, githubRepoUser, "gotool", &github.NewPullRequest{
+		Title: github.String("Update to Go version " + goVersion),
+		Head:  github.String("pull-" + goVersion),
+		Base:  github.String("main"),
+	})
+	if err != nil {
+		return err
+	}
+
+	log.Printf("pr = %+v", pr)
+
+	_, _, err = client.PullRequests.Merge(ctx, githubRepoUser, "gotool", int(*pr.Number), "automatically merged", &github.PullRequestOptions{
+		MergeMethod: "squash",
+	})
+	return err
+}
+
 func main() {
 	log.SetFlags(log.Lshortfile | log.Ltime)
 
@@ -257,6 +346,11 @@ func main() {
 	}
 
 	if err := upload(ctx, tmp, client); err != nil {
+		_ = os.RemoveAll(tmp)
+		log.Fatal(err)
+	}
+
+	if err := updateCommit(ctx, tmp, client); err != nil {
 		_ = os.RemoveAll(tmp)
 		log.Fatal(err)
 	}
