@@ -12,16 +12,22 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/anupcshan/gotool"
 	"golang.org/x/sync/errgroup"
 )
 
 func main() {
+	var goVersion string
+	flag.StringVar(&goVersion, "go-version", "", "Go version to rebuild release for (empty to automatically select latest release)")
 	flag.Parse()
+
+	if goVersion == "" {
+		log.Fatal("Go version not specified")
+	}
+
 	log.SetFlags(log.Lmicroseconds)
 
-	toolchainURL := fmt.Sprintf("https://go.dev/dl/go%s.src.tar.gz", gotool.GoVersion)
-	log.Printf("Building Go version %s", gotool.GoVersion)
+	toolchainURL := fmt.Sprintf("https://go.dev/dl/go%s.src.tar.gz", goVersion)
+	log.Printf("Building Go version %s", goVersion)
 
 	f, err := ioutil.TempFile("", "toolchain")
 	if err != nil {

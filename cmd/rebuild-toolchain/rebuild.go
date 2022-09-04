@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"go/format"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/anupcshan/gotool"
 	"github.com/google/go-github/v47/github"
@@ -33,7 +35,10 @@ const (
 	githubRepoUser = "anupcshan"
 )
 
-var archs = []string{"amd64", "arm64", "arm"}
+var (
+	archs     = []string{"amd64", "arm64", "arm"}
+	goVersion string
+)
 
 func rebuild(builddir string) error {
 	cmd := exec.Command(
@@ -70,6 +75,8 @@ func rebuild(builddir string) error {
 		"--volume", fmt.Sprintf("%s:/tmp/buildresult:Z", builddir),
 		"gotool-rebuild-toolchain",
 		"/usr/bin/build-toolchain",
+		"--go-version",
+		goVersion,
 	}
 
 	args = append(args, archs...)
@@ -135,8 +142,8 @@ var checksums = map[string]string{
 func closeRelease(ctx context.Context, client *github.Client, release *github.RepositoryRelease) error {
 	release, _, err := client.Repositories.EditRelease(ctx, githubRepoUser, "gotool", *release.ID, &github.RepositoryRelease{
 		Draft:   github.Bool(false),
-		TagName: github.String(gotool.GoVersion),
-		Name:    github.String(fmt.Sprintf("Go %s static toolchain", gotool.GoVersion)),
+		TagName: github.String(goVersion),
+		Name:    github.String(fmt.Sprintf("Go %s static toolchain", goVersion)),
 	})
 
 	log.Printf("%+v", release)
@@ -167,16 +174,61 @@ func uploadAssets(ctx context.Context, client *github.Client, release *github.Re
 func createRelease(ctx context.Context, client *github.Client) (*github.RepositoryRelease, error) {
 	release, _, err := client.Repositories.CreateRelease(ctx, githubRepoUser, "gotool", &github.RepositoryRelease{
 		Draft:   github.Bool(true),
-		TagName: github.String(gotool.GoVersion),
-		Name:    github.String(fmt.Sprintf("Go %s static toolchain", gotool.GoVersion)),
+		TagName: github.String(goVersion),
+		Name:    github.String(fmt.Sprintf("Go %s static toolchain", goVersion)),
 	})
 
 	return release, err
 }
 
+// https://pkg.go.dev/golang.org/x/website/internal/dl#Release
+// Releases sorted from newest to oldest.
+func getLatestGoRelease() (string, error) {
+	resp, err := http.Get("https://go.dev/dl/?mode=json")
+	if err != nil {
+		return "", err
+	}
+
+	var releases []struct {
+		Version string `json:"version"`
+		Stable  bool   `json:"stable"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return "", err
+	}
+
+	log.Printf("%+v", releases)
+
+	for _, release := range releases {
+		if release.Stable {
+			return strings.TrimPrefix(release.Version, "go"), nil
+		}
+	}
+
+	return "", fmt.Errorf("No stable releases found")
+}
+
 func main() {
 	log.SetFlags(log.Lshortfile | log.Ltime)
+
+	flag.StringVar(&goVersion, "go-version", "", "Go version to rebuild release for (empty to automatically select latest release)")
 	flag.Parse()
+
+	if goVersion == "" {
+		var err error
+		goVersion, err = getLatestGoRelease()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		log.Printf("Detected latest Go version %s", goVersion)
+	}
+
+	if goVersion == gotool.GoVersion {
+		log.Printf("No change in Go version. Not building a new release ...")
+		return
+	}
 
 	tmp, err := ioutil.TempDir("/tmp", "rebuild-toolchain")
 	if err != nil {
