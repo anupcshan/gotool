@@ -1,3 +1,3 @@
 package gotool
 
-const GoVersion = "1.17.6"
+const GoVersion = "1.18.5"
