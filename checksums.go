@@ -1,7 +1,7 @@
 package gotool
 
 var checksums = map[string]string{
-	"amd64": "38edf0b7b6d1648ba742fe864a41b61f3ac65834d77db668408cb6fbb6365eb2",
-	"arm64": "564391741c0b7a549340dbf3659d32aa5ceab577527af97cd9f69912cbf5605a",
-	"arm":   "a94a78b6ba04da5a66e74bee27f9a4a9f822b33c0675d7ecf0e8402bbace31c7",
+	"amd64": "5537083a1124e70f0e19be8e7536496e1d62c04aed3f0ec413ac0a4a8df58dff",
+	"arm64": "3afb748df758624b2077695a344b210da8b413d6e0e4f96ddf9ebeb4c5f5cd75",
+	"arm":   "ee51217ba48400e707afe76924a60d726bae73bbcc09f18e5eca192b30d1596a",
 }
